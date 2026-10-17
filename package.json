@@ -1,0 +1,23 @@
+{
+  "name": "family-gallery-backend",
+  "version": "1.0.0",
+  "description": "Secure Node.js & Express REST API server for Family Gallery",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.8.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "exif-parser": "^0.1.12",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^9.11.2",
+    "sharp": "^0.33.5"
+  }
+}
