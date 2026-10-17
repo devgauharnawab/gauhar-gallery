@@ -124,8 +124,51 @@ export class PhotoService {
     }
 
     // Ensure the file is not attempting path traversal
-    if (photo.filepath.includes('..')) {
+    if (photo.filepath && photo.filepath.includes('..')) {
       throw new Error('Access denied: Invalid path traversal detected.');
+    }
+
+    // Direct check: if file exists on disk, return immediately
+    if (photo.filepath && fs.existsSync(photo.filepath)) {
+      return photo.filepath;
+    }
+
+    // Intelligent Auto-Resolution:
+    // If the path was recorded under a renamed/moved folder (e.g. 'Amir Bhaiya' -> 'bhaiya'),
+    // or if the drive root changed, resolve the actual on-disk location dynamically
+    const candidates = [];
+
+    if (photo.filepath) {
+      if (/amir bhaiya/i.test(photo.filepath)) {
+        candidates.push(photo.filepath.replace(/amir bhaiya/gi, 'bhaiya'));
+      }
+      if (/bhaiya/i.test(photo.filepath)) {
+        candidates.push(photo.filepath.replace(/bhaiya/gi, 'Amir Bhaiya'));
+      }
+
+      // Check inside config.galleryRoot with relative path
+      const photosSubIndex = photo.filepath.search(/[\\/]PhotoS([\\/]|$)/i);
+      if (photosSubIndex !== -1) {
+        const relFromPhotos = photo.filepath.substring(photosSubIndex + 8).replace(/^[\\/]+/, '');
+        if (relFromPhotos) {
+          candidates.push(path.join(config.galleryRoot, relFromPhotos));
+        }
+      }
+    }
+
+    if (photo.filename) {
+      candidates.push(path.join(config.galleryRoot, photo.filename));
+      candidates.push(path.join('E:\\bhaiya\\PhotoS', photo.filename));
+    }
+
+    for (const cand of candidates) {
+      if (cand && fs.existsSync(cand)) {
+        // Self-heal: update stored filepath in memory & index so subsequent calls are instant
+        photo.filepath = cand;
+        photo.directory = path.dirname(cand);
+        photoStore.upsertPhoto(photo);
+        return cand;
+      }
     }
 
     return photo.filepath;
