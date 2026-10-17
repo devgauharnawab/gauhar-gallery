@@ -1,5 +1,6 @@
+import fs from 'fs';
 import { scannerService } from '../services/scannerService.js';
-import { MongoSetting } from '../models/settingMongo.js';
+import { settingsService } from '../services/settingsService.js';
 import { config } from '../config/env.js';
 import { cleanInputPath } from '../utils/pathValidator.js';
 
@@ -8,17 +9,24 @@ export class ScannerController {
     try {
       let { rootDir } = req.body || {};
       if (!rootDir || !String(rootDir).trim()) {
-        const row = await MongoSetting.findOne({ key: 'gallery_root' }).lean();
-        rootDir = row?.value || config.galleryRoot;
+        const data = await settingsService.getSettings();
+        rootDir = data.settings.gallery_root;
       }
       rootDir = cleanInputPath(rootDir);
-      if (req.body && req.body.rootDir) {
-        await MongoSetting.findOneAndUpdate(
-          { key: 'gallery_root' },
-          { key: 'gallery_root', value: rootDir },
-          { upsert: true }
-        );
+
+      // Verify path exists, otherwise fallback to configured galleryRoot
+      if (!fs.existsSync(rootDir)) {
+        if (fs.existsSync(config.galleryRoot)) {
+          rootDir = config.galleryRoot;
+        } else if (fs.existsSync('E:\\')) {
+          rootDir = 'E:\\';
+        }
       }
+
+      if (req.body && req.body.saveAsDefault && req.body.rootDir && fs.existsSync(rootDir)) {
+        await settingsService.updateSettings({ gallery_root: rootDir });
+      }
+
       const result = await scannerService.startScan(rootDir);
       res.status(200).json({
         success: true,

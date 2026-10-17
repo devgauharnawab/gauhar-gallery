@@ -1,8 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { MongoPhoto } from '../models/photoMongo.js';
-import { MongoScannerState } from '../models/scannerStateMongo.js';
+import { photoStore } from './photoStore.js';
 import { config } from '../config/env.js';
 import { isPathInsideRoot, shouldSkipDirectory, normalizeSystemPath } from '../utils/pathValidator.js';
 import { ThumbnailService } from './thumbnailService.js';
@@ -20,47 +19,23 @@ class ScannerService {
     this.errorsCount = 0;
     this.currentDirectory = '';
     this.startTime = null;
+    this.endTime = null;
+    this.lastError = null;
+    this.lastStatus = 'idle';
     this._periodicTimer = null;
   }
 
   async getStatus() {
-    if (this.isScanning) {
-      return {
-        status: 'scanning',
-        currentDirectory: this.currentDirectory,
-        scannedFiles: this.scannedCount,
-        imagesFound: this.imagesFound,
-        errorsCount: this.errorsCount,
-        startTime: this.startTime,
-        endTime: null,
-        lastError: null
-      };
-    }
-
-    try {
-      const state = await MongoScannerState.findById('scanner_1').lean();
-      return {
-        status: state?.status || 'idle',
-        currentDirectory: state?.currentDirectory || '',
-        scannedFiles: state?.scannedFiles || 0,
-        imagesFound: state?.imagesFound || 0,
-        errorsCount: state?.errorsCount || 0,
-        startTime: state?.startTime ? new Date(state.startTime).toISOString() : null,
-        endTime: state?.endTime ? new Date(state.endTime).toISOString() : null,
-        lastError: state?.lastError || null
-      };
-    } catch (err) {
-      return {
-        status: 'idle',
-        currentDirectory: '',
-        scannedFiles: 0,
-        imagesFound: 0,
-        errorsCount: 0,
-        startTime: null,
-        endTime: null,
-        lastError: null
-      };
-    }
+    return {
+      status: this.isScanning ? 'scanning' : this.lastStatus,
+      currentDirectory: this.isScanning ? this.currentDirectory : '',
+      scannedFiles: this.scannedCount,
+      imagesFound: this.imagesFound,
+      errorsCount: this.errorsCount,
+      startTime: this.startTime,
+      endTime: this.endTime,
+      lastError: this.lastError
+    };
   }
 
   cancelScan() {
@@ -74,10 +49,10 @@ class ScannerService {
   startPeriodicScanning(intervalMinutes = 15) {
     if (this._periodicTimer) return;
     const intervalMs = Math.max(1, intervalMinutes) * 60 * 1000;
-    console.log(`[Scanner] Continuous background scanning active (every ${intervalMinutes}m).`);
+    console.log(`[Scanner] Background photo scanner active (every ${intervalMinutes}m).`);
     this._periodicTimer = setInterval(async () => {
       if (!this.isScanning) {
-        console.log('[Scanner] Continuous background scan checking for new photos...');
+        console.log('[Scanner] Periodic scan checking E: drive for new photos...');
         try {
           await this.startScan();
         } catch (err) {
@@ -101,7 +76,6 @@ class ScannerService {
 
     const rootDir = customRoot ? path.resolve(customRoot) : config.galleryRoot;
 
-    // Verify root directory exists and is accessible
     if (!fs.existsSync(rootDir)) {
       throw new Error(`Configured gallery root directory does not exist or is not connected: ${rootDir}`);
     }
@@ -112,61 +86,33 @@ class ScannerService {
     this.imagesFound = 0;
     this.errorsCount = 0;
     this.startTime = new Date().toISOString();
+    this.endTime = null;
+    this.lastError = null;
+    this.lastStatus = 'scanning';
     this.currentDirectory = rootDir;
 
-    // Update scanner state in MongoDB
-    try {
-      await MongoScannerState.findByIdAndUpdate(
-        'scanner_1',
-        {
-          status: 'scanning',
-          currentDirectory: rootDir,
-          scannedFiles: 0,
-          imagesFound: 0,
-          errorsCount: 0,
-          startTime: new Date(this.startTime),
-          endTime: null,
-          lastError: null
-        },
-        { upsert: true }
-      );
-    } catch (e) {
-      console.warn('[Scanner] Could not record initial scan state to MongoDB:', e.message);
-    }
-
-    // Launch scan asynchronously in background
+    // Launch scan asynchronously in background without blocking the event loop
     setImmediate(async () => {
       try {
         await this._runScan(rootDir);
 
-        const status = this.cancelRequested ? 'cancelled' : 'completed';
-        const endTime = new Date();
+        this.lastStatus = this.cancelRequested ? 'cancelled' : 'completed';
+        this.endTime = new Date().toISOString();
+        photoStore.saveIndex();
 
-        await MongoScannerState.findByIdAndUpdate('scanner_1', {
-          status,
-          currentDirectory: '',
-          scannedFiles: this.scannedCount,
-          imagesFound: this.imagesFound,
-          errorsCount: this.errorsCount,
-          endTime
-        }).catch(() => {});
-
-        console.log(`[Scanner] Scan ${status}. Scanned ${this.scannedCount} files, found ${this.imagesFound} images.`);
+        console.log(`[Scanner] Scan ${this.lastStatus}. Scanned ${this.scannedCount} files, found ${this.imagesFound} images on your computer.`);
       } catch (err) {
         console.error('[Scanner] Scan failed:', err);
-        await MongoScannerState.findByIdAndUpdate('scanner_1', {
-          status: 'failed',
-          currentDirectory: '',
-          lastError: err.message,
-          endTime: new Date()
-        }).catch(() => {});
+        this.lastStatus = 'failed';
+        this.lastError = err.message;
+        this.endTime = new Date().toISOString();
       } finally {
         this.isScanning = false;
         this.cancelRequested = false;
       }
     });
 
-    return { message: 'Scan started in background.', rootDir };
+    return { message: 'Scan started in background on your computer.', rootDir };
   }
 
   async _runScan(rootDir) {
@@ -174,25 +120,7 @@ class ScannerService {
     const visitedRealPaths = new Set();
     const discoveredPaths = new Set();
 
-    // In-memory cache of already indexed photos to avoid redundant remote MongoDB network round-trips
-    const existingPhotosMap = new Map();
-    try {
-      const existingDocs = await MongoPhoto.find(
-        { is_deleted: false },
-        { filepath: 1, file_size: 1, date_modified: 1 }
-      ).lean();
-
-      for (const doc of existingDocs) {
-        existingPhotosMap.set(doc.filepath, {
-          id: doc._id,
-          file_size: doc.file_size,
-          date_modified: doc.date_modified ? new Date(doc.date_modified).toISOString() : null
-        });
-      }
-      console.log(`[Scanner] Loaded ${existingPhotosMap.size} existing photos into fast index cache.`);
-    } catch (e) {
-      console.warn('[Scanner] Pre-fetch cache note:', e.message);
-    }
+    photoStore.init(true);
 
     while (dirsToProcess.length > 0) {
       if (this.cancelRequested) {
@@ -203,7 +131,6 @@ class ScannerService {
       const currentDir = dirsToProcess.shift();
       this.currentDirectory = currentDir;
 
-      // Avoid following circular links or traversing outside root
       let realDir;
       try {
         realDir = fs.realpathSync.native ? fs.realpathSync.native(currentDir) : fs.realpathSync(currentDir);
@@ -216,7 +143,7 @@ class ScannerService {
       visitedRealPaths.add(realDir);
 
       if (!isPathInsideRoot(realDir, rootDir)) {
-        continue; // Discard symlinks leading outside root
+        continue;
       }
 
       let entries;
@@ -244,19 +171,19 @@ class ScannerService {
             continue;
           }
 
-          // We found a supported image
+          // Found supported image on disk
           try {
             const stats = await fs.promises.stat(fullPath);
             const mtimeIso = stats.mtime.toISOString();
             const normalizedPath = normalizeSystemPath(fullPath);
             const photoId = crypto.createHash('sha256').update(normalizedPath).digest('hex').substring(0, 24);
 
-            // Check if photo is already indexed and unchanged
-            const existing = existingPhotosMap.get(normalizedPath);
+            // Check if photo is already in local photo store and unchanged
+            const existing = photoStore.getPhotoById(photoId);
             if (existing && existing.file_size === stats.size && existing.date_modified === mtimeIso) {
               discoveredPaths.add(normalizedPath);
               this.imagesFound++;
-              ThumbnailService.ensureThumbnail(fullPath, existing.id).catch(() => {});
+              ThumbnailService.ensureThumbnail(fullPath, photoId).catch(() => {});
               continue;
             }
 
@@ -277,43 +204,26 @@ class ScannerService {
             discoveredPaths.add(normalizedPath);
             this.imagesFound++;
 
-            await MongoPhoto.findOneAndUpdate(
-              { _id: photoId },
-              {
-                _id: photoId,
-                filename: entry.name,
-                filepath: normalizedPath,
-                directory: path.dirname(normalizedPath),
-                file_size: stats.size,
-                width: meta.width || null,
-                height: meta.height || null,
-                mime_type: meta.mimeType || null,
-                format: meta.format || null,
-                date_taken: meta.dateTaken ? new Date(meta.dateTaken) : stats.mtime,
-                date_modified: stats.mtime,
-                camera_make: meta.cameraMake || null,
-                camera_model: meta.cameraModel || null,
-                thumbnail_path: thumbPath,
-                is_deleted: false
-              },
-              { upsert: true }
-            );
-
-            existingPhotosMap.set(normalizedPath, {
+            photoStore.upsertPhoto({
               id: photoId,
+              filename: entry.name,
+              filepath: normalizedPath,
+              directory: path.dirname(normalizedPath),
               file_size: stats.size,
-              date_modified: mtimeIso
+              width: meta.width || null,
+              height: meta.height || null,
+              mime_type: meta.mimeType || null,
+              format: meta.format || ext.replace('.', ''),
+              date_taken: meta.dateTaken || mtimeIso,
+              date_modified: mtimeIso,
+              camera_make: meta.cameraMake || null,
+              camera_model: meta.cameraModel || null,
+              thumbnail_path: thumbPath
             });
 
-            // Yield execution briefly every 20 images to prevent event loop starvation
+            // Yield execution briefly every 20 images
             if (this.imagesFound % 20 === 0) {
               await new Promise(resolve => setTimeout(resolve, 5));
-              await MongoScannerState.findByIdAndUpdate('scanner_1', {
-                scannedFiles: this.scannedCount,
-                imagesFound: this.imagesFound,
-                errorsCount: this.errorsCount,
-                currentDirectory: currentDir
-              }).catch(() => {});
             }
           } catch (fileErr) {
             this.errorsCount++;
@@ -324,17 +234,13 @@ class ScannerService {
 
     // Mark deleted files that were not discovered during a complete scan
     if (!this.cancelRequested && discoveredPaths.size > 0) {
-      const missingPhotoIds = [];
-      for (const [fpath, p] of existingPhotosMap.entries()) {
-        if (!discoveredPaths.has(fpath)) {
-          if (!fs.existsSync(fpath)) {
-            missingPhotoIds.push(p.id);
+      const allPhotos = photoStore.getAllPhotos();
+      for (const p of allPhotos) {
+        if (!discoveredPaths.has(p.filepath)) {
+          if (!fs.existsSync(p.filepath)) {
+            photoStore.deletePhoto(p.id);
           }
         }
-      }
-      if (missingPhotoIds.length > 0) {
-        await MongoPhoto.updateMany({ _id: { $in: missingPhotoIds } }, { is_deleted: true });
-        console.log(`[Scanner] Marked ${missingPhotoIds.length} deleted/moved photos.`);
       }
     }
   }

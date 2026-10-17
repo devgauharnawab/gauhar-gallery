@@ -1,59 +1,60 @@
 import fs from 'fs';
-import { MongoPhoto } from '../models/photoMongo.js';
-import { MongoAlbum } from '../models/albumMongo.js';
-import { MongoFavorite } from '../models/favoriteMongo.js';
-import { MongoScannerState } from '../models/scannerStateMongo.js';
+import { photoStore } from './photoStore.js';
+import { albumService } from './albumService.js';
+import { favoriteService } from './favoriteService.js';
+import { scannerService } from './scannerService.js';
 import { config } from '../config/env.js';
 
 export class DashboardService {
   static async getStats() {
-    const [totalPhotos, totalAlbums, totalFavorites, scannerState, recentList] = await Promise.all([
-      MongoPhoto.countDocuments({ is_deleted: false }),
-      MongoAlbum.countDocuments(),
-      MongoFavorite.countDocuments(),
-      MongoScannerState.findById('scanner_1').lean(),
-      MongoPhoto.find({ is_deleted: false })
-        .sort({ createdAt: -1, date_modified: -1 })
-        .limit(8)
-        .lean()
-    ]);
+    const photos = photoStore.getAllPhotos();
+    const albums = await albumService.getAlbums();
+    const totalFavorites = favoriteService.count();
 
-    const recentIds = recentList.map(p => p._id);
-    const favSet = new Set(
-      (await MongoFavorite.find({ photoId: { $in: recentIds } }, 'photoId').lean()).map(f => f.photoId)
-    );
+    let storageUsed = 0;
+    const formatMap = {};
 
-    const recentPhotos = recentList.map(p => ({
-      id: p._id,
-      filename: p.filename,
-      directory: p.directory,
-      file_size: p.file_size,
-      width: p.width,
-      height: p.height,
-      date_taken: p.date_taken,
-      date_modified: p.date_modified,
-      format: p.format,
-      is_favorite: favSet.has(p._id)
+    for (const p of photos) {
+      storageUsed += (p.file_size || 0);
+      const fmt = (p.format || 'other').toLowerCase();
+      formatMap[fmt] = (formatMap[fmt] || 0) + 1;
+    }
+
+    // Sort newest 12 photos for dashboard
+    const sorted = [...photos].sort((a, b) => {
+      const dateA = new Date(a.date_taken || a.date_modified || 0);
+      const dateB = new Date(b.date_taken || b.date_modified || 0);
+      return dateB - dateA;
+    });
+
+    const recentPhotos = sorted.slice(0, 12).map(p => ({
+      ...p,
+      is_favorite: favoriteService.isFavorite(p.id)
     }));
 
     const driveConnected = fs.existsSync(config.galleryRoot);
+    const scannerStatus = await scannerService.getStatus();
 
     return {
-      totalPhotos,
-      totalAlbums,
+      totalPhotos: photos.length,
+      totalAlbums: albums.length,
       totalFavorites,
+      storageUsedBytes: storageUsed,
+      storageUsedFormatted: formatBytes(storageUsed),
+      formatsBreakdown: formatMap,
+      recentPhotos,
       driveConnected,
       galleryRoot: config.galleryRoot,
-      recentPhotos,
-      scanner: {
-        status: scannerState?.status || 'idle',
-        scannedFiles: scannerState?.scannedFiles || 0,
-        imagesFound: scannerState?.imagesFound || 0,
-        errorsCount: scannerState?.errorsCount || 0,
-        startTime: scannerState?.startTime || null,
-        endTime: scannerState?.endTime || null,
-        lastError: scannerState?.lastError || null
-      }
+      scannerStatus,
+      databaseType: 'Local Filesystem (Computer is the Database - Zero Photos in Database)'
     };
   }
+}
+
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }

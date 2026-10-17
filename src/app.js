@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import express from 'express';
 import cors from 'cors';
 import { config } from './config/env.js';
@@ -62,6 +65,28 @@ export function createApp() {
   app.use('/api/scanner', scannerRoutes);
   app.use('/api/settings', settingsRoutes);
   app.use('/api/dashboard', dashboardRoutes);
+
+  // Serve static frontend build if present (Unified Railway / production hosting)
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+  const frontendDistPath = path.resolve(__dirname, '../../frontend/dist/frontend/browser');
+  const localPublicPath = path.resolve(__dirname, '../public');
+
+  const staticDir = fs.existsSync(frontendDistPath)
+    ? frontendDistPath
+    : fs.existsSync(localPublicPath)
+      ? localPublicPath
+      : null;
+
+  if (staticDir) {
+    app.use(express.static(staticDir));
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api')) {
+        return next();
+      }
+      res.sendFile(path.join(staticDir, 'index.html'));
+    });
+  }
 
   // Error handling
   app.use(notFoundHandler);

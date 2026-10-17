@@ -20,6 +20,11 @@ async function runComprehensiveTests() {
 
   await connectMongo();
 
+  const indexPath = path.join(__dirname, 'storage/photo_index.json');
+  const settingsPath = path.join(__dirname, 'storage/settings.json');
+  const indexBackup = fs.existsSync(indexPath) ? fs.readFileSync(indexPath, 'utf-8') : null;
+  const settingsBackup = fs.existsSync(settingsPath) ? fs.readFileSync(settingsPath, 'utf-8') : null;
+
   const testPort = 5003;
   const baseUrl = `http://127.0.0.1:${testPort}`;
   const app = createApp();
@@ -228,6 +233,14 @@ async function runComprehensiveTests() {
     try {
       fs.rmSync(testFolder, { recursive: true, force: true });
     } catch (e) {}
+
+    // Restore original storage files so running tests doesn't affect active app
+    if (indexBackup) {
+      fs.writeFileSync(indexPath, indexBackup, 'utf-8');
+    }
+    if (settingsBackup) {
+      fs.writeFileSync(settingsPath, settingsBackup, 'utf-8');
+    }
   }
 }
 

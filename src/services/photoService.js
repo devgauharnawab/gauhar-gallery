@@ -1,9 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import { MongoPhoto } from '../models/photoMongo.js';
-import { MongoFavorite } from '../models/favoriteMongo.js';
-import { MongoAlbum } from '../models/albumMongo.js';
-import { MongoSetting } from '../models/settingMongo.js';
+import { photoStore } from './photoStore.js';
+import { favoriteService } from './favoriteService.js';
+import { albumService } from './albumService.js';
 import { config } from '../config/env.js';
 import { isPathInsideRoot } from '../utils/pathValidator.js';
 import { ThumbnailService } from './thumbnailService.js';
@@ -18,184 +17,151 @@ export class PhotoService {
     format = '',
     albumId = '',
     favoriteOnly = false
-  }) {
+  } = {}) {
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 24));
     const skip = (pageNum - 1) * limitNum;
 
-    const query = { is_deleted: false };
+    let items = photoStore.getAllPhotos();
 
-    if (search && search.trim()) {
-      const regex = new RegExp(search.trim(), 'i');
-      query.$or = [{ filename: regex }, { directory: regex }];
-    }
-
-    if (directory && directory.trim()) {
-      query.directory = directory.trim();
-    }
-
-    if (format && format.trim()) {
-      query.format = format.trim().toLowerCase();
-    }
-
+    // 1. Filter by Album (photos in that album folder on E: drive)
     if (albumId && albumId.trim()) {
-      const album = await MongoAlbum.findById(albumId.trim()).lean();
+      const album = await albumService.getAlbumById(albumId.trim());
       if (album && album.photos) {
-        query._id = { $in: album.photos };
+        const albumPhotoIds = new Set(album.photos.map(p => p.id));
+        items = items.filter(p => albumPhotoIds.has(p.id));
       } else {
-        query._id = { $in: [] };
+        items = [];
       }
     }
 
+    // 2. Filter by Favorites
     if (favoriteOnly) {
-      const favorites = await MongoFavorite.find({}, 'photoId').lean();
-      const favIds = favorites.map(f => f.photoId);
-      query._id = { $in: favIds };
+      items = items.filter(p => favoriteService.isFavorite(p.id));
     }
 
-    let sortObj = { date_taken: -1, date_modified: -1 };
+    // 3. Filter by Search Query
+    if (search && search.trim()) {
+      const q = search.trim().toLowerCase();
+      items = items.filter(p =>
+        (p.filename && p.filename.toLowerCase().includes(q)) ||
+        (p.directory && p.directory.toLowerCase().includes(q))
+      );
+    }
+
+    // 4. Filter by Directory
+    if (directory && directory.trim()) {
+      const dirQ = directory.trim().toLowerCase();
+      items = items.filter(p => p.directory && p.directory.toLowerCase() === dirQ);
+    }
+
+    // 5. Filter by Format
+    if (format && format.trim()) {
+      const fmtQ = format.trim().toLowerCase();
+      items = items.filter(p => p.format && p.format.toLowerCase() === fmtQ);
+    }
+
+    // 6. Sort
     switch (sort) {
       case 'date_asc':
-        sortObj = { date_taken: 1, date_modified: 1 };
+        items.sort((a, b) => new Date(a.date_taken || a.date_modified) - new Date(b.date_taken || b.date_modified));
         break;
       case 'name_asc':
-        sortObj = { filename: 1 };
+        items.sort((a, b) => a.filename.localeCompare(b.filename));
         break;
       case 'name_desc':
-        sortObj = { filename: -1 };
+        items.sort((a, b) => b.filename.localeCompare(a.filename));
         break;
       case 'size_desc':
-        sortObj = { file_size: -1 };
+        items.sort((a, b) => b.file_size - a.file_size);
         break;
       case 'size_asc':
-        sortObj = { file_size: 1 };
+        items.sort((a, b) => a.file_size - b.file_size);
         break;
-      default:
-        sortObj = { date_taken: -1, date_modified: -1 };
+      default: // date_desc
+        items.sort((a, b) => new Date(b.date_taken || b.date_modified) - new Date(a.date_taken || a.date_modified));
     }
 
-    const [total, rawPhotos] = await Promise.all([
-      MongoPhoto.countDocuments(query),
-      MongoPhoto.find(query)
-        .sort(sortObj)
-        .skip(skip)
-        .limit(limitNum)
-        .lean()
-    ]);
-
-    // Check favorites for this page's photos
-    const photoIds = rawPhotos.map(p => p._id);
-    const favSet = new Set(
-      (await MongoFavorite.find({ photoId: { $in: photoIds } }, 'photoId').lean()).map(f => f.photoId)
-    );
-
-    const photos = rawPhotos.map(p => ({
-      id: p._id,
-      filename: p.filename,
-      filepath: p.filepath,
-      directory: p.directory,
-      file_size: p.file_size,
-      width: p.width,
-      height: p.height,
-      mime_type: p.mime_type,
-      format: p.format,
-      date_taken: p.date_taken,
-      date_modified: p.date_modified,
-      camera_make: p.camera_make,
-      camera_model: p.camera_model,
-      thumbnail_path: p.thumbnail_path,
-      is_favorite: favSet.has(p._id)
+    const total = items.length;
+    const paginated = items.slice(skip, skip + limitNum).map(p => ({
+      ...p,
+      is_favorite: favoriteService.isFavorite(p.id)
     }));
 
     return {
-      photos,
-      items: photos,
+      items: paginated,
       pagination: {
         page: pageNum,
         limit: limitNum,
         total,
-        totalPages: Math.ceil(total / limitNum)
+        totalPages: Math.ceil(total / limitNum) || 1
       }
     };
   }
 
   static async getPhotoById(id) {
-    const photo = await MongoPhoto.findOne({ _id: id, is_deleted: false }).lean();
+    const photo = photoStore.getPhotoById(id);
     if (!photo) return null;
 
-    const isFav = await MongoFavorite.exists({ photoId: id });
-    const albums = await MongoAlbum.find({ photos: id }, '_id name').lean();
-
     return {
-      id: photo._id,
-      filename: photo.filename,
-      filepath: photo.filepath,
-      directory: photo.directory,
-      file_size: photo.file_size,
-      width: photo.width,
-      height: photo.height,
-      mime_type: photo.mime_type,
-      format: photo.format,
-      date_taken: photo.date_taken,
-      date_modified: photo.date_modified,
-      camera_make: photo.camera_make,
-      camera_model: photo.camera_model,
-      is_favorite: Boolean(isFav),
-      albums: albums.map(a => ({ id: a._id, name: a.name }))
+      ...photo,
+      is_favorite: favoriteService.isFavorite(id)
     };
   }
 
   static async getOriginalPath(id) {
-    const photo = await MongoPhoto.findOne({ _id: id, is_deleted: false }).lean();
+    const photo = photoStore.getPhotoById(id);
     if (!photo) {
       throw new Error('Photo not found.');
     }
 
-    const setting = await MongoSetting.findOne({ key: 'gallery_root' }).lean();
-    const activeRoot = setting?.value || config.galleryRoot;
-
-    const isInsideActive = isPathInsideRoot(photo.filepath, activeRoot);
-    const isInsideEnv = isPathInsideRoot(photo.filepath, config.galleryRoot);
-
-    if (!isInsideActive && !isInsideEnv) {
-      throw new Error('Access denied: File is outside the permitted gallery root.');
-    }
-
-    if (!fs.existsSync(photo.filepath)) {
-      throw new Error('Original file does not exist on disk.');
+    // Ensure the file is not attempting path traversal
+    if (photo.filepath.includes('..')) {
+      throw new Error('Access denied: Invalid path traversal detected.');
     }
 
     return photo.filepath;
   }
 
   static async getThumbnailPath(id) {
-    const photo = await MongoPhoto.findOne({ _id: id, is_deleted: false }).lean();
+    const photo = photoStore.getPhotoById(id);
     if (!photo) return null;
 
-    const thumbPath = await ThumbnailService.ensureThumbnail(photo.filepath, id);
-    if (thumbPath && fs.existsSync(thumbPath)) {
-      return thumbPath;
+    if (photo.thumbnail_path && fs.existsSync(photo.thumbnail_path)) {
+      return photo.thumbnail_path;
     }
-    return null;
+
+    return await ThumbnailService.ensureThumbnail(photo.filepath, id);
   }
 
   static async getUniqueDirectories() {
-    const res = await MongoPhoto.aggregate([
-      { $match: { is_deleted: false } },
-      { $group: { _id: '$directory', count: { $sum: 1 } } },
-      { $sort: { _id: 1 } },
-      { $project: { directory: '$_id', count: 1, _id: 0 } }
-    ]);
-    return res;
+    const all = photoStore.getAllPhotos();
+    const map = new Map();
+
+    for (const p of all) {
+      const count = map.get(p.directory) || 0;
+      map.set(p.directory, count + 1);
+    }
+
+    return Array.from(map.entries()).map(([directory, count]) => ({
+      directory,
+      count
+    }));
   }
 
   static async getUniqueFormats() {
-    const res = await MongoPhoto.aggregate([
-      { $match: { is_deleted: false, format: { $ne: null } } },
-      { $group: { _id: '$format', count: { $sum: 1 } } },
-      { $sort: { count: -1 } },
-      { $project: { format: '$_id', count: 1, _id: 0 } }
-    ]);
-    return res;
+    const all = photoStore.getAllPhotos();
+    const map = new Map();
+
+    for (const p of all) {
+      const f = (p.format || 'unknown').toLowerCase();
+      const count = map.get(f) || 0;
+      map.set(f, count + 1);
+    }
+
+    return Array.from(map.entries()).map(([format, count]) => ({
+      format,
+      count
+    }));
   }
 }

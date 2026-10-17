@@ -91,19 +91,23 @@ export class AlbumController {
   static async addPhotoToAlbum(req, res, next) {
     try {
       const { id } = req.params;
-      const { photoId } = req.body;
+      const { photoId, photoIds } = req.body;
 
-      if (!photoId) {
+      const idsToAdd = Array.isArray(photoIds) ? photoIds : (photoId ? [photoId] : []);
+      if (idsToAdd.length === 0) {
         return res.status(400).json({
           success: false,
-          error: 'photoId is required in request body.'
+          error: 'photoId or photoIds is required in request body.'
         });
       }
 
-      await AlbumService.addPhotoToAlbum(id, photoId);
+      for (const pId of idsToAdd) {
+        await AlbumService.addPhotoToAlbum(id, pId);
+      }
+
       res.status(200).json({
         success: true,
-        message: 'Photo added to album.'
+        message: `${idsToAdd.length} photo(s) added to album.`
       });
     } catch (err) {
       res.status(400).json({

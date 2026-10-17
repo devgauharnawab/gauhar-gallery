@@ -21,6 +21,10 @@ export class ThumbnailService {
       return thumbPath;
     }
 
+    if (!sourcePath || !fs.existsSync(sourcePath)) {
+      return null;
+    }
+
     try {
       await sharp(sourcePath, { failOn: 'none' })
         .rotate() // auto-orient based on EXIF

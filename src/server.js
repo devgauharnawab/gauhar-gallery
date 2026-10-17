@@ -2,11 +2,16 @@ import mongoose from 'mongoose';
 import fs from 'fs';
 import { config } from './config/env.js';
 import { connectMongo, isMongoConnected } from './config/mongo.js';
+import { photoStore } from './services/photoStore.js';
 import { scannerService } from './services/scannerService.js';
 import { createApp } from './app.js';
 
-// Connect to MongoDB Atlas
-console.log('[Startup] Connecting to MongoDB Atlas...');
+// Initialize local computer photo repository
+console.log('[Startup] Initializing local computer photo store...');
+photoStore.init();
+
+// Connect to MongoDB Atlas (Strictly for User Login & Accounts)
+console.log('[Startup] Connecting to MongoDB Atlas for user login...');
 await connectMongo();
 
 const app = createApp();
@@ -15,28 +20,26 @@ const server = app.listen(config.port, config.host, () => {
   console.log(`====================================================`);
   console.log(`  Family Gallery Backend Server Running`);
   console.log(`  URL: http://${config.host}:${config.port}`);
-  console.log(`  Configured Gallery Root: ${config.galleryRoot}`);
-  console.log(`  Database: MongoDB Atlas (Connected)`);
-  console.log(`  Continuous Background Scanning: Active (every 15 min)`);
-  console.log(`  Default Logins: admin / admin OR gauhar / gauhar123`);
+  console.log(`  Photo Database: Local Windows Filesystem (${config.galleryRoot})`);
+  console.log(`  Login Authentication: MongoDB Atlas (Users Only)`);
+  console.log(`  Default Logins: gauhar / gauhar123 OR admin / admin`);
   console.log(`====================================================`);
 
-  // Start continuous background scanning for photos
+  // Start background scan ONLY if index is empty (first time run)
   setTimeout(() => {
-    if (fs.existsSync(config.galleryRoot)) {
-      console.log('[Startup] Initiating background photo index check...');
-      scannerService.startScan().catch(e => {
-        // Safe skip if busy or drive temporarily inaccessible
-      });
+    if (fs.existsSync(config.galleryRoot) && photoStore.count() === 0) {
+      console.log('[Startup] First-time setup: Initiating photo index scan on computer...');
+      scannerService.startScan().catch(() => {});
+    } else {
+      console.log(`[Startup] ${photoStore.count()} photos already indexed and instantly accessible.`);
     }
-    // Check every 15 minutes automatically
-    scannerService.startPeriodicScanning(15);
-  }, 4000);
+  }, 2000);
 });
 
 // Graceful shutdown handling
 async function handleShutdown(signal) {
   console.log(`\n[Shutdown] Received ${signal}. Closing server and MongoDB connection...`);
+  photoStore.saveIndex();
   server.close(async () => {
     try {
       if (isMongoConnected()) {

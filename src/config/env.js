@@ -10,7 +10,7 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 export const config = {
   port: parseInt(process.env.PORT || '5000', 10),
-  host: process.env.HOST || '127.0.0.1',
+  host: process.env.HOST || '0.0.0.0',
   galleryRoot: path.resolve(process.env.GALLERY_ROOT || 'E:\\'),
   jwtSecret: process.env.JWT_SECRET || 'fallback_family_gallery_dev_secret_2026',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
