@@ -61,10 +61,14 @@ export class PhotoService {
       items = items.filter(p => p.format && p.format.toLowerCase() === fmtQ);
     }
 
-    // 6. Sort
+    // 6. Ultra-fast cached sort
     switch (sort) {
       case 'date_asc':
-        items.sort((a, b) => new Date(a.date_taken || a.date_modified) - new Date(b.date_taken || b.date_modified));
+        items.sort((a, b) => {
+          const tA = a._time || (a._time = new Date(a.date_taken || a.date_modified || 0).getTime());
+          const tB = b._time || (b._time = new Date(b.date_taken || b.date_modified || 0).getTime());
+          return tA - tB;
+        });
         break;
       case 'name_asc':
         items.sort((a, b) => a.filename.localeCompare(b.filename));
@@ -79,7 +83,11 @@ export class PhotoService {
         items.sort((a, b) => a.file_size - b.file_size);
         break;
       default: // date_desc
-        items.sort((a, b) => new Date(b.date_taken || b.date_modified) - new Date(a.date_taken || a.date_modified));
+        items.sort((a, b) => {
+          const tA = a._time || (a._time = new Date(a.date_taken || a.date_modified || 0).getTime());
+          const tB = b._time || (b._time = new Date(b.date_taken || b.date_modified || 0).getTime());
+          return tB - tA;
+        });
     }
 
     const total = items.length;
