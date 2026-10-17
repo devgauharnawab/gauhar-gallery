@@ -7,7 +7,7 @@ export class PhotoController {
   static async getPhotos(req, res, next) {
     try {
       const { page, limit, sort, search, directory, format, albumId, favoriteOnly } = req.query;
-      const result = PhotoService.getPhotos({
+      const result = await PhotoService.getPhotos({
         page,
         limit,
         sort,
@@ -31,7 +31,7 @@ export class PhotoController {
   static async getPhotoById(req, res, next) {
     try {
       const { id } = req.params;
-      const photo = PhotoService.getPhotoById(id);
+      const photo = await PhotoService.getPhotoById(id);
 
       if (!photo) {
         return res.status(404).json({
@@ -118,7 +118,7 @@ export class PhotoController {
   static async getMetadata(req, res, next) {
     try {
       const { id } = req.params;
-      const photo = PhotoService.getPhotoById(id);
+      const photo = await PhotoService.getPhotoById(id);
 
       if (!photo) {
         return res.status(404).json({
@@ -153,7 +153,7 @@ export class PhotoController {
 
   static async getDirectories(req, res, next) {
     try {
-      const directories = PhotoService.getUniqueDirectories();
+      const directories = await PhotoService.getUniqueDirectories();
       res.status(200).json({
         success: true,
         data: directories
@@ -165,7 +165,7 @@ export class PhotoController {
 
   static async getFormats(req, res, next) {
     try {
-      const formats = PhotoService.getUniqueFormats();
+      const formats = await PhotoService.getUniqueFormats();
       res.status(200).json({
         success: true,
         data: formats

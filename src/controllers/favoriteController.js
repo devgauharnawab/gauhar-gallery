@@ -4,7 +4,7 @@ export class FavoriteController {
   static async getFavorites(req, res, next) {
     try {
       const { page, limit, sort, search } = req.query;
-      const result = FavoriteService.getFavorites({ page, limit, sort, search });
+      const result = await FavoriteService.getFavorites({ page, limit, sort, search });
       res.status(200).json({
         success: true,
         data: result.items,
@@ -18,7 +18,7 @@ export class FavoriteController {
   static async addFavorite(req, res, next) {
     try {
       const { photoId } = req.params;
-      FavoriteService.addFavorite(photoId);
+      await FavoriteService.addFavorite(photoId);
       res.status(200).json({
         success: true,
         message: 'Photo added to favorites.'
@@ -34,7 +34,7 @@ export class FavoriteController {
   static async removeFavorite(req, res, next) {
     try {
       const { photoId } = req.params;
-      FavoriteService.removeFavorite(photoId);
+      await FavoriteService.removeFavorite(photoId);
       res.status(200).json({
         success: true,
         message: 'Photo removed from favorites.'

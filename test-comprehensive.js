@@ -2,8 +2,9 @@ import path from 'path';
 import fs from 'fs';
 import sharp from 'sharp';
 import { fileURLToPath } from 'url';
+import mongoose from 'mongoose';
 import { config } from './src/config/env.js';
-import { initDatabase, db } from './src/models/db.js';
+import { connectMongo } from './src/config/mongo.js';
 import { createApp } from './src/app.js';
 import { isPathInsideRoot, shouldSkipDirectory } from './src/utils/pathValidator.js';
 import { scannerService } from './src/services/scannerService.js';
@@ -17,7 +18,7 @@ async function runComprehensiveTests() {
   console.log('  RUNNING FAMILY GALLERY COMPREHENSIVE TEST SUITE   ');
   console.log('====================================================\n');
 
-  initDatabase();
+  await connectMongo();
 
   const testPort = 5003;
   const baseUrl = `http://127.0.0.1:${testPort}`;
@@ -120,11 +121,14 @@ async function runComprehensiveTests() {
     const scanStartData = await scanStartRes.json();
     assert(scanStartRes.status === 200 && scanStartData.success, 'Drive scan starts in background');
 
-    // Wait 2 seconds for scan and thumbnail generation
-    await new Promise(r => setTimeout(r, 2000));
-
-    const statusRes = await fetch(`${baseUrl}/api/scanner/status`, { headers: authHeaders });
-    const statusData = await statusRes.json();
+    // Poll scanner until completed (up to 10 seconds for cloud Atlas writes)
+    let statusData;
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 500));
+      const statusRes = await fetch(`${baseUrl}/api/scanner/status`, { headers: authHeaders });
+      statusData = await statusRes.json();
+      if (statusData.data?.status === 'completed') break;
+    }
     assert(statusData.data.status === 'completed', `Scanner completed status: ${statusData.data.status}`);
     assert(statusData.data.imagesFound >= 2, `Scanner found and indexed valid images: ${statusData.data.imagesFound}`);
 
@@ -219,7 +223,7 @@ async function runComprehensiveTests() {
     console.error('Test execution error:', err);
   } finally {
     server.close();
-    db.close();
+    await mongoose.disconnect();
     // Clean up temporary test files
     try {
       fs.rmSync(testFolder, { recursive: true, force: true });

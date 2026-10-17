@@ -3,7 +3,7 @@ import { AlbumService } from '../services/albumService.js';
 export class AlbumController {
   static async getAlbums(req, res, next) {
     try {
-      const albums = AlbumService.getAlbums();
+      const albums = await AlbumService.getAlbums();
       res.status(200).json({
         success: true,
         data: albums
@@ -16,7 +16,7 @@ export class AlbumController {
   static async getAlbumById(req, res, next) {
     try {
       const { id } = req.params;
-      const album = AlbumService.getAlbumById(id);
+      const album = await AlbumService.getAlbumById(id);
 
       if (!album) {
         return res.status(404).json({
@@ -37,7 +37,7 @@ export class AlbumController {
   static async createAlbum(req, res, next) {
     try {
       const { name, description, coverPhotoId } = req.body;
-      const album = AlbumService.createAlbum(name, description, coverPhotoId);
+      const album = await AlbumService.createAlbum(name, description, coverPhotoId);
       res.status(201).json({
         success: true,
         message: 'Album created successfully.',
@@ -55,7 +55,7 @@ export class AlbumController {
     try {
       const { id } = req.params;
       const { name, description, coverPhotoId } = req.body;
-      const updated = AlbumService.updateAlbum(id, { name, description, coverPhotoId });
+      const updated = await AlbumService.updateAlbum(id, { name, description, coverPhotoId });
       res.status(200).json({
         success: true,
         message: 'Album updated successfully.',
@@ -72,7 +72,7 @@ export class AlbumController {
   static async deleteAlbum(req, res, next) {
     try {
       const { id } = req.params;
-      const deleted = AlbumService.deleteAlbum(id);
+      const deleted = await AlbumService.deleteAlbum(id);
       if (!deleted) {
         return res.status(404).json({
           success: false,
@@ -100,7 +100,7 @@ export class AlbumController {
         });
       }
 
-      AlbumService.addPhotoToAlbum(id, photoId);
+      await AlbumService.addPhotoToAlbum(id, photoId);
       res.status(200).json({
         success: true,
         message: 'Photo added to album.'
@@ -116,7 +116,7 @@ export class AlbumController {
   static async removePhotoFromAlbum(req, res, next) {
     try {
       const { id, photoId } = req.params;
-      AlbumService.removePhotoFromAlbum(id, photoId);
+      await AlbumService.removePhotoFromAlbum(id, photoId);
       res.status(200).json({
         success: true,
         message: 'Photo removed from album.'

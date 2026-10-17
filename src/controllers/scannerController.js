@@ -1,5 +1,5 @@
 import { scannerService } from '../services/scannerService.js';
-import { db } from '../models/db.js';
+import { MongoSetting } from '../models/settingMongo.js';
 import { config } from '../config/env.js';
 import { cleanInputPath } from '../utils/pathValidator.js';
 
@@ -8,16 +8,16 @@ export class ScannerController {
     try {
       let { rootDir } = req.body || {};
       if (!rootDir || !String(rootDir).trim()) {
-        const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('gallery_root');
+        const row = await MongoSetting.findOne({ key: 'gallery_root' }).lean();
         rootDir = row?.value || config.galleryRoot;
       }
       rootDir = cleanInputPath(rootDir);
       if (req.body && req.body.rootDir) {
-        db.prepare(`
-          INSERT INTO settings (key, value, updated_at)
-          VALUES ('gallery_root', ?, CURRENT_TIMESTAMP)
-          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-        `).run(rootDir);
+        await MongoSetting.findOneAndUpdate(
+          { key: 'gallery_root' },
+          { key: 'gallery_root', value: rootDir },
+          { upsert: true }
+        );
       }
       const result = await scannerService.startScan(rootDir);
       res.status(200).json({
@@ -49,7 +49,7 @@ export class ScannerController {
   }
 
   static async getStatus(req, res) {
-    const status = scannerService.getStatus();
+    const status = await scannerService.getStatus();
     res.status(200).json({
       success: true,
       data: status

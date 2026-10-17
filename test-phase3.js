@@ -2,8 +2,9 @@ import path from 'path';
 import fs from 'fs';
 import sharp from 'sharp';
 import { fileURLToPath } from 'url';
+import mongoose from 'mongoose';
 import { config } from './src/config/env.js';
-import { initDatabase, db } from './src/models/db.js';
+import { connectMongo } from './src/config/mongo.js';
 import { createApp } from './src/app.js';
 import { isPathInsideRoot } from './src/utils/pathValidator.js';
 
@@ -12,7 +13,7 @@ const __dirname = path.dirname(__filename);
 
 async function testPhase3() {
   console.log('=== Starting Phase 3 Verification ===');
-  initDatabase();
+  await connectMongo();
 
   const testPort = 5002;
   const baseUrl = `http://127.0.0.1:${testPort}`;
@@ -146,7 +147,7 @@ async function testPhase3() {
     console.error('Phase 3 verification error:', err);
   } finally {
     server.close();
-    db.close();
+    await mongoose.disconnect();
     // Clean up test images
     try {
       fs.rmSync(testImagesDir, { recursive: true, force: true });

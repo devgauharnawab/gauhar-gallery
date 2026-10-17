@@ -1,31 +1,36 @@
-import { db } from '../models/db.js';
+import { MongoFavorite } from '../models/favoriteMongo.js';
+import { MongoPhoto } from '../models/photoMongo.js';
 import { PhotoService } from './photoService.js';
 
 export class FavoriteService {
-  static getFavorites(params = {}) {
-    return PhotoService.getPhotos({
+  static async getFavorites(params = {}) {
+    return await PhotoService.getPhotos({
       ...params,
       favoriteOnly: true
     });
   }
 
-  static addFavorite(photoId) {
-    const photo = db.prepare('SELECT id FROM photos WHERE id = ? AND is_deleted = 0').get(photoId);
-    if (!photo) {
+  static async addFavorite(photoId) {
+    const photoExists = await MongoPhoto.exists({ _id: photoId, is_deleted: false });
+    if (!photoExists) {
       throw new Error('Photo not found.');
     }
 
-    db.prepare('INSERT OR IGNORE INTO favorites (photo_id) VALUES (?)').run(photoId);
+    await MongoFavorite.updateOne(
+      { photoId },
+      { $setOnInsert: { photoId, createdAt: new Date() } },
+      { upsert: true }
+    );
     return true;
   }
 
-  static removeFavorite(photoId) {
-    const result = db.prepare('DELETE FROM favorites WHERE photo_id = ?').run(photoId);
-    return result.changes > 0;
+  static async removeFavorite(photoId) {
+    const res = await MongoFavorite.deleteOne({ photoId });
+    return res.deletedCount > 0;
   }
 
-  static isFavorite(photoId) {
-    const fav = db.prepare('SELECT photo_id FROM favorites WHERE photo_id = ?').get(photoId);
-    return Boolean(fav);
+  static async isFavorite(photoId) {
+    const exists = await MongoFavorite.exists({ photoId });
+    return Boolean(exists);
   }
 }

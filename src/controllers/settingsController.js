@@ -3,7 +3,7 @@ import { SettingsService } from '../services/settingsService.js';
 export class SettingsController {
   static async getSettings(req, res, next) {
     try {
-      const data = SettingsService.getSettings();
+      const data = await SettingsService.getSettings();
       res.status(200).json({
         success: true,
         data
@@ -15,7 +15,7 @@ export class SettingsController {
 
   static async updateSettings(req, res, next) {
     try {
-      const updated = SettingsService.updateSettings(req.body);
+      const updated = await SettingsService.updateSettings(req.body);
       res.status(200).json({
         success: true,
         message: 'Settings updated successfully.',

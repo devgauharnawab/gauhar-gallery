@@ -1,10 +1,11 @@
+import mongoose from 'mongoose';
 import { config } from './src/config/env.js';
-import { initDatabase, db } from './src/models/db.js';
+import { connectMongo } from './src/config/mongo.js';
 import { createApp } from './src/app.js';
 
 async function testPhase2() {
   console.log('--- Starting Phase 2 Backend Verification ---');
-  initDatabase();
+  await connectMongo();
 
   const app = createApp();
   const server = app.listen(5001, '127.0.0.1');
@@ -52,7 +53,7 @@ async function testPhase2() {
     console.error('Test error:', err);
   } finally {
     server.close();
-    db.close();
+    await mongoose.disconnect();
   }
 }
 

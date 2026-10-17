@@ -8,8 +8,7 @@ let isConnected = false;
 
 export async function connectMongo() {
   if (!config.mongodbUri) {
-    console.log('[MongoDB Atlas] Note: MONGODB_URI is not set in backend/.env.');
-    console.log('[MongoDB Atlas] Local SQLite authentication active.\n');
+    console.error('[MongoDB Atlas] Error: MONGODB_URI is not set in backend/.env.');
     return false;
   }
 
@@ -28,7 +27,7 @@ export async function connectMongo() {
     });
 
     isConnected = true;
-    console.log('[MongoDB Atlas] Successfully connected to MongoDB Atlas for login & authentication.');
+    console.log('[MongoDB Atlas] Successfully connected to MongoDB Atlas.');
 
     // Seed default admin in MongoDB Atlas if no users exist
     await seedDefaultAdminMongo();
@@ -37,7 +36,6 @@ export async function connectMongo() {
   } catch (err) {
     isConnected = false;
     console.error(`[MongoDB Atlas] Connection failed: ${err.message}`);
-    console.log('[MongoDB Atlas] Authentication will use local fallback until MongoDB Atlas is connected.\n');
     return false;
   }
 }
