@@ -32,7 +32,7 @@ export class DashboardService {
       is_favorite: favoriteService.isFavorite(p.id)
     }));
 
-    const driveConnected = fs.existsSync(config.galleryRoot);
+    const driveConnected = fs.existsSync(config.galleryRoot) || photos.length > 0;
     const scannerStatus = await scannerService.getStatus();
 
     return {

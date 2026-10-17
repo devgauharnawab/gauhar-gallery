@@ -54,7 +54,7 @@ class SettingsService {
         this._save();
       }
     }
-    const driveConnected = fs.existsSync(currentRoot);
+    const driveConnected = fs.existsSync(currentRoot) || photoStore.count() > 0;
     const mongoActive = isMongoConnected();
 
     return {

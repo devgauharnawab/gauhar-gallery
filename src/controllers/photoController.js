@@ -55,6 +55,19 @@ export class PhotoController {
       const filePath = await PhotoService.getOriginalPath(id);
 
       if (!fs.existsSync(filePath)) {
+        // Fallback: If original RAW file is not on this server (e.g. cloud host without E: drive),
+        // serve the high-res WebP preview thumbnail so user can still view the photo!
+        const fastThumbPath = path.join(config.thumbnailDir, `${id}.webp`);
+        if (fs.existsSync(fastThumbPath)) {
+          return res.sendFile(path.resolve(fastThumbPath), {
+            maxAge: '7d',
+            lastModified: true,
+            headers: {
+              'Content-Type': 'image/webp'
+            }
+          });
+        }
+
         return res.status(404).json({
           success: false,
           error: 'Original file not found on disk.'
