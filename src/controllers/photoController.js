@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { PhotoService } from '../services/photoService.js';
+import { photoStore } from '../services/photoStore.js';
 import { config } from '../config/env.js';
 
 export class PhotoController {
@@ -52,13 +53,20 @@ export class PhotoController {
   static async getOriginal(req, res, next) {
     try {
       const { id } = req.params;
+      const isDownload = req.query.download === 'true' || req.query.download === '1';
+      const photo = photoStore.getPhotoById(id);
       const filePath = await PhotoService.getOriginalPath(id);
+
+      const downloadFileName = photo?.filename || (filePath ? path.basename(filePath) : `${id}.jpg`);
 
       if (!fs.existsSync(filePath)) {
         // Fallback: If original RAW file is not on this server (e.g. cloud host without E: drive),
-        // serve the high-res WebP preview thumbnail so user can still view the photo!
+        // serve the high-res WebP preview thumbnail so user can still view and download the photo!
         const fastThumbPath = path.join(config.thumbnailDir, `${id}.webp`);
         if (fs.existsSync(fastThumbPath)) {
+          if (isDownload) {
+            return res.download(path.resolve(fastThumbPath), downloadFileName);
+          }
           return res.sendFile(path.resolve(fastThumbPath), {
             maxAge: '7d',
             lastModified: true,
@@ -74,6 +82,10 @@ export class PhotoController {
         });
       }
 
+      if (isDownload) {
+        return res.download(path.resolve(filePath), downloadFileName);
+      }
+
       return res.sendFile(path.resolve(filePath), {
         maxAge: '7d',
         lastModified: true
@@ -87,6 +99,11 @@ export class PhotoController {
       }
       next(err);
     }
+  }
+
+  static async downloadOriginal(req, res, next) {
+    req.query.download = 'true';
+    return PhotoController.getOriginal(req, res, next);
   }
 
   static async getThumbnail(req, res, next) {

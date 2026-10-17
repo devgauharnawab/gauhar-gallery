@@ -17,6 +17,7 @@ router.get('/', PhotoController.getPhotos);
 // Single photo endpoints
 router.get('/:id', PhotoController.getPhotoById);
 router.get('/:id/original', PhotoController.getOriginal);
+router.get('/:id/download', PhotoController.downloadOriginal);
 router.get('/:id/thumbnail', PhotoController.getThumbnail);
 router.get('/:id/metadata', PhotoController.getMetadata);
 

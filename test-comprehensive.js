@@ -160,6 +160,13 @@ async function runComprehensiveTests() {
     });
     assert(origRes.status === 200, 'Original photo streamed safely with HTTP 200');
 
+    // 3.6 Original photo download attachment
+    const dlRes = await fetch(`${baseUrl}/api/photos/${sunsetPhoto.id}/download`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const dispHeader = dlRes.headers.get('content-disposition');
+    assert(dlRes.status === 200 && dispHeader && dispHeader.includes('attachment'), 'Original photo download attachment delivered with Content-Disposition');
+
     // ----------------------------------------------------
     // TEST SUITE 4: ALBUMS & FAVORITES
     // ----------------------------------------------------
