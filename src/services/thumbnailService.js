@@ -12,7 +12,7 @@ export class ThumbnailService {
   }
 
   /**
-   * Generates a 480x480 WebP thumbnail for a photo if it doesn't already exist
+   * Generates a 1440x1440 High-Definition WebP preview/thumbnail for crisp full-screen viewing
    */
   static async ensureThumbnail(sourcePath, photoId) {
     const thumbPath = this.getThumbnailPath(photoId);
@@ -28,11 +28,11 @@ export class ThumbnailService {
     try {
       await sharp(sourcePath, { failOn: 'none' })
         .rotate() // auto-orient based on EXIF
-        .resize(480, 480, {
+        .resize(1440, 1440, {
           fit: 'inside',
           withoutEnlargement: true
         })
-        .webp({ quality: 80, effort: 4 })
+        .webp({ quality: 84, effort: 4 })
         .toFile(thumbPath);
 
       return thumbPath;
