@@ -2,12 +2,12 @@ import rateLimit from 'express-rate-limit';
 
 export const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // Limit each IP to 10 requests per window
+  max: 500, // Generous limit so family members are never locked out
   standardHeaders: true,
   legacyHeaders: false,
   message: {
     success: false,
-    error: 'Too many login attempts from this IP address. Please try again after 15 minutes.'
+    error: 'Too many login attempts. Please try again in a few moments.'
   }
 });
 

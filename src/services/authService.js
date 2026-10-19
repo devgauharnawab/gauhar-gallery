@@ -168,21 +168,35 @@ export class AuthService {
       throw new Error('User ID is required.');
     }
 
+    const strId = String(userId);
+
+    // Instant return for default owner / admin (Zero DB query needed)
+    if (strId === '6ad3180d535d43b2387eda12' || strId === 'gauhar') {
+      return {
+        id: '6ad3180d535d43b2387eda12',
+        username: 'gauhar',
+        email: 'gauhar@familygallery.local',
+        role: 'admin',
+        createdAt: '2026-10-17T06:39:09.295Z',
+        authProvider: 'system-default'
+      };
+    }
+
+    if (strId === '6ad3180c535d43b2387eda11' || strId === 'admin') {
+      return {
+        id: '6ad3180c535d43b2387eda11',
+        username: 'admin',
+        email: 'admin@familygallery.local',
+        role: 'admin',
+        createdAt: '2026-10-17T06:39:08.888Z',
+        authProvider: 'system-default'
+      };
+    }
+
     let user = null;
     try {
       user = await MongoUser.findById(userId);
     } catch (e) {}
-
-    if (!user) {
-      if (userId === '6ad3180d535d43b2387eda12') {
-        user = {
-          _id: '6ad3180d535d43b2387eda12',
-          username: 'gauhar',
-          email: 'gauhar@familygallery.local',
-          role: 'admin',
-          createdAt: '2026-10-17T06:39:09.295Z'
-        };
-      } else if (userId === '6ad3180c535d43b2387eda11') {
         user = {
           _id: '6ad3180c535d43b2387eda11',
           username: 'admin',
