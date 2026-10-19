@@ -3,6 +3,7 @@ import path from 'path';
 import { PhotoService } from '../services/photoService.js';
 import { photoStore } from '../services/photoStore.js';
 import { config } from '../config/env.js';
+import { settingsService } from '../services/settingsService.js';
 
 export class PhotoController {
   static async getPhotos(req, res, next) {
@@ -60,10 +61,40 @@ export class PhotoController {
       const downloadFileName = photo?.filename || (filePath ? path.basename(filePath) : `${id}.jpg`);
 
       if (!fs.existsSync(filePath)) {
-        // Fallback: If original RAW file is not on this server (e.g. cloud host without E: drive),
+        // 1. Check if a Remote Bridge / Home PC Tunnel is active (e.g. Railway bridging to Home PC)
+        const remoteBridge = (settingsService.settings && settingsService.settings.remote_bridge_url) || process.env.HOME_TUNNEL_URL || process.env.REMOTE_BRIDGE_URL;
+        if (remoteBridge && !req.query.internal) {
+          try {
+            const cleanBridge = remoteBridge.replace(/\/+$/, '');
+            const bridgeUrl = `${cleanBridge}/photos/${id}/${isDownload ? 'download' : 'original'}?internal=true`;
+            const bridgeRes = await fetch(bridgeUrl, {
+              headers: {
+                'Authorization': req.headers['authorization'] || ''
+              },
+              signal: AbortSignal.timeout(12000)
+            });
+
+            if (bridgeRes.ok && bridgeRes.body) {
+              if (isDownload) {
+                res.setHeader('Content-Disposition', `attachment; filename="${downloadFileName}"`);
+              }
+              res.setHeader('Content-Type', bridgeRes.headers.get('content-type') || 'image/jpeg');
+              const cl = bridgeRes.headers.get('content-length');
+              if (cl) res.setHeader('Content-Length', cl);
+              res.setHeader('X-Photo-Quality', 'original-bridged');
+              const { Readable } = await import('stream');
+              return Readable.fromWeb(bridgeRes.body).pipe(res);
+            }
+          } catch (bridgeErr) {
+            console.warn('[PhotoController] Remote bridge download failed, trying preview fallback:', bridgeErr.message);
+          }
+        }
+
+        // 2. Fallback: If original RAW file is not on this server (e.g. cloud host without E: drive and Home PC is offline),
         // serve the high-res WebP preview thumbnail so user can still view and download the photo!
         const fastThumbPath = path.join(config.thumbnailDir, `${id}.webp`);
         if (fs.existsSync(fastThumbPath)) {
+          res.setHeader('X-Photo-Quality', 'preview-fallback');
           if (isDownload) {
             return res.download(path.resolve(fastThumbPath), downloadFileName);
           }
@@ -71,7 +102,8 @@ export class PhotoController {
             maxAge: '7d',
             lastModified: true,
             headers: {
-              'Content-Type': 'image/webp'
+              'Content-Type': 'image/webp',
+              'X-Photo-Quality': 'preview-fallback'
             }
           });
         }
@@ -82,13 +114,17 @@ export class PhotoController {
         });
       }
 
+      res.setHeader('X-Photo-Quality', 'original');
       if (isDownload) {
         return res.download(path.resolve(filePath), downloadFileName);
       }
 
       return res.sendFile(path.resolve(filePath), {
         maxAge: '7d',
-        lastModified: true
+        lastModified: true,
+        headers: {
+          'X-Photo-Quality': 'original'
+        }
       });
     } catch (err) {
       if (err.message.includes('Access denied')) {

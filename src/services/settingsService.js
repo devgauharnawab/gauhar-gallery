@@ -57,9 +57,12 @@ class SettingsService {
     const driveConnected = fs.existsSync(currentRoot) || photoStore.count() > 0;
     const mongoActive = isMongoConnected();
 
+    const remoteBridge = this.settings.remote_bridge_url || process.env.HOME_TUNNEL_URL || '';
+
     return {
       settings: {
         gallery_root: currentRoot,
+        remote_bridge_url: remoteBridge,
         theme: this.settings.theme || 'system',
         thumbnails_per_page: parseInt(this.settings.thumbnails_per_page || '40', 10)
       },
@@ -68,6 +71,8 @@ class SettingsService {
         port: config.port,
         configuredRoot: currentRoot,
         driveConnected,
+        remoteBridgeConfigured: !!remoteBridge,
+        remoteBridgeUrl: remoteBridge || null,
         database: 'Local Windows Filesystem (Computer is the Database - Zero Photos in Cloud)',
         authDatabase: 'MongoDB Atlas (User Login & Authentication Only)',
         mongoConnected: mongoActive,
@@ -81,12 +86,14 @@ class SettingsService {
 
   async updateSettings(updates = {}) {
     this._load();
-    const allowedKeys = ['gallery_root', 'theme', 'thumbnails_per_page'];
+    const allowedKeys = ['gallery_root', 'theme', 'thumbnails_per_page', 'remote_bridge_url'];
 
     for (let [key, value] of Object.entries(updates)) {
       if (allowedKeys.includes(key)) {
         if (key === 'gallery_root') {
           value = cleanInputPath(value);
+        } else if (key === 'remote_bridge_url') {
+          value = String(value || '').trim().replace(/\/+$/, '');
         }
         this.settings[key] = String(value);
       }
