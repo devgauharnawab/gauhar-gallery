@@ -28,8 +28,7 @@ export class PhotoService {
     if (albumId && albumId.trim()) {
       const album = await albumService.getAlbumById(albumId.trim());
       if (album && album.photos) {
-        const albumPhotoIds = new Set(album.photos.map(p => p.id));
-        items = items.filter(p => albumPhotoIds.has(p.id));
+        items = album.photos;
       } else {
         items = [];
       }

@@ -4,6 +4,15 @@ import crypto from 'crypto';
 import { config } from '../config/env.js';
 import { photoStore } from './photoStore.js';
 import { normalizeSystemPath } from '../utils/pathValidator.js';
+import { ThumbnailService } from './thumbnailService.js';
+
+const IMAGE_EXTENSIONS = new Set([
+  '.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.avif', '.mp4'
+]);
+
+const IGNORED_NAMES = new Set([
+  'photos', 'storage', 'thumbnails', 'system volume information', '$recycle.bin', 'node_modules', '.git', 'albums'
+]);
 
 class AlbumService {
   constructor() {
@@ -52,54 +61,132 @@ class AlbumService {
 
   async getAlbums() {
     this._loadMeta();
-    const baseDir = this._getAlbumsBaseDir();
-    const albums = [];
+    const candidateBases = new Set();
 
-    if (!fs.existsSync(baseDir)) {
-      return [];
+    // 1. Primary dedicated Albums directory on E: drive
+    const albumsSubdir = path.join(config.galleryRoot, 'Albums');
+    if (fs.existsSync(albumsSubdir)) {
+      candidateBases.add(albumsSubdir);
     }
 
-    try {
-      const entries = await fs.promises.readdir(baseDir, { withFileTypes: true });
+    // 2. Parent directory containing albums (e.g. E:\bhaiya -> Walima, Haldi, Milad-Mehandi-Manjha, etc.)
+    const parentDir = path.dirname(config.galleryRoot);
+    if (fs.existsSync(parentDir)) {
+      candidateBases.add(parentDir);
+    }
 
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
+    const albums = [];
+    const seenFolderPaths = new Set();
+    let hasNewPhotos = false;
 
-        const albumName = entry.name;
-        const albumDir = path.join(baseDir, albumName);
-        const albumId = crypto.createHash('md5').update(normalizeSystemPath(albumDir)).digest('hex').substring(0, 16);
-        const meta = this.albumsMeta.get(albumId) || {};
+    // Scan candidate directories for album folders
+    for (const base of candidateBases) {
+      try {
+        const entries = await fs.promises.readdir(base, { withFileTypes: true });
 
-        // Discover photos inside this folder on E: drive
-        let fileEntries = [];
-        try {
-          fileEntries = await fs.promises.readdir(albumDir);
-        } catch (e) {}
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
 
-        const imageFiles = fileEntries.filter(f => {
-          const ext = path.extname(f).toLowerCase();
-          return ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff'].includes(ext);
-        });
+          const lowerName = entry.name.toLowerCase();
+          // Skip system folders, node_modules, storage, and the root photos directory
+          if (IGNORED_NAMES.has(lowerName)) continue;
 
-        // Find cover photo
-        let coverPhotoId = meta.coverPhotoId;
-        if (!coverPhotoId && imageFiles.length > 0) {
-          const firstPath = normalizeSystemPath(path.join(albumDir, imageFiles[0]));
-          coverPhotoId = crypto.createHash('sha256').update(firstPath).digest('hex').substring(0, 24);
+          const albumDir = path.join(base, entry.name);
+          const normDir = normalizeSystemPath(albumDir).toLowerCase();
+          if (seenFolderPaths.has(normDir)) continue;
+          seenFolderPaths.add(normDir);
+
+          const albumId = crypto.createHash('md5').update(normDir).digest('hex').substring(0, 16);
+          const meta = this.albumsMeta.get(albumId) || {};
+
+          // Discover image files inside this album folder
+          let fileEntries = [];
+          try {
+            fileEntries = await fs.promises.readdir(albumDir);
+          } catch (e) {}
+
+          const imageFiles = fileEntries.filter(f => {
+            const ext = path.extname(f).toLowerCase();
+            return IMAGE_EXTENSIONS.has(ext);
+          });
+
+          // Find or create valid cover photo
+          let coverPhotoId = meta.coverPhotoId || meta.cover_photo_id;
+          if (imageFiles.length > 0) {
+            // Find existing photo in store for first file
+            const firstFile = imageFiles[0];
+            const firstPath = path.join(albumDir, firstFile);
+            const firstNorm = normalizeSystemPath(firstPath);
+            let photo = photoStore.findPhoto(firstNorm, firstFile);
+
+            if (photo) {
+              coverPhotoId = photo.id;
+            } else {
+              // Ensure photo and thumbnail are registered in store
+              const generatedId = crypto.createHash('sha256').update(firstNorm).digest('hex').substring(0, 24);
+              coverPhotoId = generatedId;
+              try {
+                const stat = await fs.promises.stat(firstPath);
+                await ThumbnailService.ensureThumbnail(firstPath, generatedId);
+                photoStore.upsertPhoto({
+                  id: generatedId,
+                  filename: firstFile,
+                  filepath: firstNorm,
+                  directory: albumDir,
+                  file_size: stat.size,
+                  date_modified: stat.mtime.toISOString(),
+                  thumbnail_path: ThumbnailService.getThumbnailPath(generatedId)
+                });
+                hasNewPhotos = true;
+              } catch (e) {}
+            }
+          }
+
+          const albumObj = {
+            id: albumId,
+            name: meta.name || entry.name,
+            description: meta.description || `Folder on E:\\ drive (${albumDir})`,
+            folderPath: albumDir,
+            photoCount: imageFiles.length,
+            photo_count: imageFiles.length,
+            coverPhotoId: coverPhotoId || null,
+            cover_photo_id: coverPhotoId || null,
+            createdAt: meta.createdAt || new Date().toISOString(),
+            created_at: meta.createdAt || new Date().toISOString(),
+            updatedAt: meta.updatedAt || meta.createdAt || new Date().toISOString(),
+            updated_at: meta.updatedAt || meta.createdAt || new Date().toISOString()
+          };
+
+          albums.push(albumObj);
         }
+      } catch (err) {
+        console.error('[AlbumService] Error scanning candidate base:', base, err.message);
+      }
+    }
 
+    // Also include any custom albums from albums_meta.json not yet in list
+    for (const [metaId, meta] of this.albumsMeta.entries()) {
+      if (meta.folderPath && !seenFolderPaths.has(normalizeSystemPath(meta.folderPath).toLowerCase())) {
+        seenFolderPaths.add(normalizeSystemPath(meta.folderPath).toLowerCase());
         albums.push({
-          id: albumId,
-          name: meta.name || albumName,
-          description: meta.description || `Folder on E:\\ drive (${albumDir})`,
-          folderPath: albumDir,
-          photoCount: imageFiles.length,
-          coverPhotoId: coverPhotoId || null,
-          createdAt: meta.createdAt || new Date().toISOString()
+          id: metaId,
+          name: meta.name,
+          description: meta.description || '',
+          folderPath: meta.folderPath,
+          photoCount: 0,
+          photo_count: 0,
+          coverPhotoId: meta.coverPhotoId || null,
+          cover_photo_id: meta.coverPhotoId || null,
+          createdAt: meta.createdAt || new Date().toISOString(),
+          created_at: meta.createdAt || new Date().toISOString(),
+          updatedAt: meta.updatedAt || meta.createdAt || new Date().toISOString(),
+          updated_at: meta.updatedAt || meta.createdAt || new Date().toISOString()
         });
       }
-    } catch (err) {
-      console.error('[AlbumService] Error reading album folders on E: drive:', err);
+    }
+
+    if (hasNewPhotos) {
+      photoStore.saveIndex();
     }
 
     return albums;
@@ -107,38 +194,68 @@ class AlbumService {
 
   async getAlbumById(id) {
     const albums = await this.getAlbums();
-    const album = albums.find(a => a.id === id);
+    const album = albums.find(a => a.id === id || (this.albumsMeta.get(id) && a.folderPath === this.albumsMeta.get(id).folderPath));
     if (!album) return null;
 
     // Read photos inside this album folder on E: drive
     const photos = [];
+    let hasNewPhotos = false;
+
     try {
-      const files = await fs.promises.readdir(album.folderPath);
-      for (const f of files) {
-        const fullPath = normalizeSystemPath(path.join(album.folderPath, f));
-        const photoId = crypto.createHash('sha256').update(fullPath).digest('hex').substring(0, 24);
-        const existing = photoStore.getPhotoById(photoId);
-        if (existing) {
-          photos.push(existing);
-        } else {
-          // If in directory but not indexed yet
-          try {
-            const stat = await fs.promises.stat(fullPath);
-            photos.push({
-              id: photoId,
-              filename: f,
-              filepath: fullPath,
-              directory: album.folderPath,
-              file_size: stat.size,
-              date_modified: stat.mtime
-            });
-          } catch (e) {}
+      if (fs.existsSync(album.folderPath)) {
+        const files = await fs.promises.readdir(album.folderPath);
+        for (const f of files) {
+          const ext = path.extname(f).toLowerCase();
+          if (!IMAGE_EXTENSIONS.has(ext)) continue;
+
+          const fullPath = path.join(album.folderPath, f);
+          const normPath = normalizeSystemPath(fullPath);
+
+          // Find in photoStore by path or filename
+          let photo = photoStore.findPhoto(normPath, f);
+
+          if (!photo) {
+            // Auto-register file into photoStore so thumbnail and details work 100%
+            const photoId = crypto.createHash('sha256').update(normPath).digest('hex').substring(0, 24);
+            try {
+              const stat = await fs.promises.stat(fullPath);
+              await ThumbnailService.ensureThumbnail(fullPath, photoId);
+              photo = {
+                id: photoId,
+                filename: f,
+                filepath: normPath,
+                directory: album.folderPath,
+                file_size: stat.size,
+                date_modified: stat.mtime.toISOString(),
+                thumbnail_path: ThumbnailService.getThumbnailPath(photoId)
+              };
+              photoStore.upsertPhoto(photo);
+              hasNewPhotos = true;
+            } catch (e) {
+              photo = {
+                id: photoId,
+                filename: f,
+                filepath: normPath,
+                directory: album.folderPath
+              };
+            }
+          }
+
+          photos.push(photo);
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn('[AlbumService] Error reading album photos:', e.message);
+    }
+
+    if (hasNewPhotos) {
+      photoStore.saveIndex();
+    }
 
     return {
       ...album,
+      photoCount: photos.length,
+      photo_count: photos.length,
       photos
     };
   }
