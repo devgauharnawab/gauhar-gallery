@@ -53,5 +53,8 @@ async function handleShutdown(signal) {
   });
 }
 
+process.on('uncaughtException', (err) => console.error('[UncaughtException]', err));
+process.on('unhandledRejection', (reason) => console.error('[UnhandledRejection]', reason));
+
 process.on('SIGINT', () => handleShutdown('SIGINT'));
 process.on('SIGTERM', () => handleShutdown('SIGTERM'));
