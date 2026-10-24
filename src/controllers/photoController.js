@@ -108,6 +108,21 @@ export class PhotoController {
           });
         }
 
+        if (photo) {
+          const displayName = photo.filename || 'Photo';
+          const ext = path.extname(displayName).toLowerCase();
+          const isVideo = ['.mp4', '.mov', '.mkv', '.avi', '.webm', '.3gp'].includes(ext);
+          const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+            <rect width="800" height="600" fill="#0f172a"/>
+            <circle cx="400" cy="270" r="54" fill="${isVideo ? '#3b82f6' : '#334155'}"/>
+            ${isVideo ? '<polygon points="386,244 426,270 386,296" fill="#ffffff"/>' : '<path d="M375 290 L390 265 L405 285 L415 272 L430 290 Z" fill="#94a3b8"/><circle cx="418" cy="258" r="5" fill="#cbd5e1"/>'}
+            <text x="400" y="370" font-family="-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif" font-size="18" font-weight="600" fill="#f8fafc" text-anchor="middle">${displayName}</text>
+            <text x="400" y="405" font-family="-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif" font-size="13" fill="#64748b" text-anchor="middle">${isVideo ? 'Video stream available on Home PC' : 'High resolution file stored on Home PC (E: drive)'}</text>
+          </svg>`;
+          res.setHeader('Content-Type', 'image/svg+xml');
+          return res.send(svg);
+        }
+
         return res.status(404).json({
           success: false,
           error: 'Original file not found on disk.'
@@ -162,6 +177,40 @@ export class PhotoController {
       // Fallback: generate on-demand if thumbnail not yet generated
       const thumbPath = await PhotoService.getThumbnailPath(id);
       if (!thumbPath || !fs.existsSync(thumbPath)) {
+        // If this is a video file (.mp4, .mov, etc.), serve a smart video thumbnail SVG so browser never 404s
+        const photo = photoStore.getPhotoById(id);
+        const ext = path.extname(photo?.filename || '').toLowerCase();
+        if (['.mp4', '.mov', '.mkv', '.avi', '.webm', '.3gp'].includes(ext)) {
+          const displayName = photo?.filename ? (photo.filename.length > 28 ? photo.filename.slice(0, 25) + '...' : photo.filename) : 'Video';
+          const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400" viewBox="0 0 600 400">
+            <rect width="600" height="400" fill="#0f172a"/>
+            <circle cx="300" cy="180" r="46" fill="#3b82f6"/>
+            <polygon points="288,158 322,180 288,202" fill="#ffffff"/>
+            <text x="300" y="270" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="16" font-weight="600" fill="#f8fafc" text-anchor="middle">${displayName}</text>
+            <rect x="250" y="300" width="100" height="24" rx="12" fill="#1e293b"/>
+            <text x="300" y="316" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="11" font-weight="500" fill="#94a3b8" text-anchor="middle">VIDEO</text>
+          </svg>`;
+          res.setHeader('Content-Type', 'image/svg+xml');
+          res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
+          return res.send(svg);
+        }
+
+        // Photo card fallback for cloud environments
+        if (photo) {
+          const displayName = photo?.filename ? (photo.filename.length > 30 ? photo.filename.slice(0, 27) + '...' : photo.filename) : 'Photo';
+          const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400" viewBox="0 0 600 400">
+            <rect width="600" height="400" fill="#1e293b"/>
+            <circle cx="300" cy="175" r="40" fill="#334155"/>
+            <path d="M280 190 L292 170 L304 185 L312 175 L324 190 Z" fill="#94a3b8"/>
+            <circle cx="314" cy="165" r="4" fill="#cbd5e1"/>
+            <text x="300" y="255" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="15" font-weight="500" fill="#e2e8f0" text-anchor="middle">${displayName}</text>
+            <text x="300" y="280" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="12" fill="#64748b" text-anchor="middle">Preview stored on Home PC</text>
+          </svg>`;
+          res.setHeader('Content-Type', 'image/svg+xml');
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+          return res.send(svg);
+        }
+
         return res.status(404).json({
           success: false,
           error: 'Thumbnail could not be generated or found.'

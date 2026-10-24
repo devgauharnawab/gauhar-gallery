@@ -11,7 +11,9 @@ const IMAGE_EXTENSIONS = new Set([
 ]);
 
 const IGNORED_NAMES = new Set([
-  'photos', 'storage', 'thumbnails', 'system volume information', '$recycle.bin', 'node_modules', '.git', 'albums'
+  'photos', 'storage', 'thumbnails', 'system volume information', '$recycle.bin',
+  'node_modules', '.git', 'albums', 'public', 'scripts', 'src', 'backend', 'frontend',
+  'dist', 'app', 'bin', 'etc', 'usr', 'var', 'tmp', 'home', 'database'
 ]);
 
 class AlbumService {
@@ -63,16 +65,25 @@ class AlbumService {
     this._loadMeta();
     const candidateBases = new Set();
 
-    // 1. Primary dedicated Albums directory on E: drive
-    const albumsSubdir = path.join(config.galleryRoot, 'Albums');
-    if (fs.existsSync(albumsSubdir)) {
-      candidateBases.add(albumsSubdir);
-    }
+    // Candidate bases on local filesystem (Windows)
+    if (fs.existsSync(config.galleryRoot)) {
+      // 1. Primary dedicated Albums directory on local drive
+      const albumsSubdir = path.join(config.galleryRoot, 'Albums');
+      if (fs.existsSync(albumsSubdir)) {
+        candidateBases.add(albumsSubdir);
+      }
 
-    // 2. Parent directory containing albums (e.g. E:\bhaiya -> Walima, Haldi, Milad-Mehandi-Manjha, etc.)
-    const parentDir = path.dirname(config.galleryRoot);
-    if (fs.existsSync(parentDir)) {
-      candidateBases.add(parentDir);
+      // 2. Parent directory containing albums (e.g. E:\bhaiya -> Walima, Haldi, Milad-Mehandi-Manjha, etc.)
+      const parentDir = path.dirname(config.galleryRoot);
+      const rootParsed = path.parse(parentDir).root;
+      if (
+        fs.existsSync(parentDir) &&
+        parentDir !== rootParsed &&
+        parentDir !== process.cwd() &&
+        !IGNORED_NAMES.has(path.basename(parentDir).toLowerCase())
+      ) {
+        candidateBases.add(parentDir);
+      }
     }
 
     const albums = [];
@@ -185,6 +196,48 @@ class AlbumService {
       }
     }
 
+    // Cloud Host Resilience (Railway): Discover albums directly from photoStore index
+    // This guarantees all albums load seamlessly in cloud containers where local Windows drives aren't mounted!
+    const allPhotos = photoStore.getAllPhotos();
+    const dirMap = new Map();
+
+    for (const p of allPhotos) {
+      if (!p.directory) continue;
+      const normDir = normalizeSystemPath(p.directory).toLowerCase();
+      const baseName = path.basename(p.directory).toLowerCase();
+      if (IGNORED_NAMES.has(baseName)) continue;
+
+      if (!dirMap.has(normDir)) {
+        dirMap.set(normDir, []);
+      }
+      dirMap.get(normDir).push(p);
+    }
+
+    for (const [normDir, pList] of dirMap.entries()) {
+      if (seenFolderPaths.has(normDir)) continue;
+      seenFolderPaths.add(normDir);
+
+      const firstPhoto = pList[0];
+      const dirName = path.basename(firstPhoto.directory);
+      const albumId = crypto.createHash('md5').update(normDir).digest('hex').substring(0, 16);
+      const meta = this.albumsMeta.get(albumId) || {};
+
+      albums.push({
+        id: albumId,
+        name: meta.name || dirName,
+        description: meta.description || `Collection (${dirName})`,
+        folderPath: firstPhoto.directory,
+        photoCount: pList.length,
+        photo_count: pList.length,
+        coverPhotoId: meta.coverPhotoId || meta.cover_photo_id || firstPhoto.id,
+        cover_photo_id: meta.coverPhotoId || meta.cover_photo_id || firstPhoto.id,
+        createdAt: meta.createdAt || firstPhoto.date_taken || new Date().toISOString(),
+        created_at: meta.createdAt || firstPhoto.date_taken || new Date().toISOString(),
+        updatedAt: meta.updatedAt || meta.createdAt || new Date().toISOString(),
+        updated_at: meta.updatedAt || meta.createdAt || new Date().toISOString()
+      });
+    }
+
     if (hasNewPhotos) {
       photoStore.saveIndex();
     }
@@ -242,6 +295,22 @@ class AlbumService {
           }
 
           photos.push(photo);
+        }
+      } else {
+        // Cloud Environment (Railway): Windows drive is not mounted locally
+        // Query photos directly from photoStore index by folder name or directory!
+        const albumFolderNorm = normalizeSystemPath(album.folderPath).toLowerCase();
+        const albumBase = path.basename(album.folderPath).toLowerCase();
+
+        const allPhotos = photoStore.getAllPhotos();
+        for (const p of allPhotos) {
+          if (!p.directory) continue;
+          const pDirNorm = normalizeSystemPath(p.directory).toLowerCase();
+          const pDirBase = path.basename(p.directory).toLowerCase();
+
+          if (pDirNorm === albumFolderNorm || pDirBase === albumBase || (album.name && pDirBase === album.name.toLowerCase())) {
+            photos.push(p);
+          }
         }
       }
     } catch (e) {
